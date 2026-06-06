@@ -13,6 +13,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "spotifly": "^0.1.1",
     "spotify-url-info": "^3.3.0",
     "youtubei.js": "^17.0.1"
   }

@@ -1,6 +1,14 @@
 import crypto from "node:crypto";
 import spotify from "spotify-url-info";
 
+let Spotifly;
+try {
+  const spotiflyMod = await import("spotifly");
+  Spotifly = spotiflyMod.Spotifly;
+} catch {
+  Spotifly = null;
+}
+
 const MAX_SPOTIFY_TRACKS = 100;
 
 const BROWSER_UA =
@@ -381,11 +389,90 @@ function extractSpotifyEntity(url) {
 }
 
 /**
+ * Fetch playlist tracks via spotifly (internal api-partner.spotify.com GraphQL).
+ * No credentials needed — auto-generates internal token.
+ * Defensively maps the GraphQL response since the exact shape can shift.
+ */
+async function fetchSpotifyViaSpotifly(entity) {
+  if (!Spotifly) throw new Error("spotifly not installed");
+  if (entity.type !== "playlist") throw new Error("spotifly fallback only supports playlists");
+
+  const s = new Spotifly();
+  const id = entity.id;
+
+  // First call: get metadata + first batch of tracks
+  const meta = await s.getPlaylist(id, 500);
+
+  // Defensive extraction — Spotify GraphQL shapes vary, try multiple paths
+  const playlistData = meta?.data?.playlist || meta?.playlist || meta;
+  const name = playlistData?.name || "Spotify Playlist";
+  const cover = playlistData?.images?.[0]?.url || playlistData?.coverArt?.sources?.[0]?.url || "";
+
+  let contentItems =
+    playlistData?.content?.items ||
+    playlistData?.tracks?.items ||
+    playlistData?.items ||
+    [];
+
+  // Paginate if we got a full batch but there might be more
+  const totalCount = playlistData?.content?.totalCount || playlistData?.tracks?.totalCount || contentItems.length;
+
+  if (contentItems.length < totalCount && contentItems.length >= 500) {
+    let offset = contentItems.length;
+    while (offset < totalCount) {
+      const batch = await s.getPlaylistContents(id, 500);
+      const batchItems =
+        batch?.data?.playlist?.content?.items ||
+        batch?.playlist?.content?.items ||
+        batch?.content?.items ||
+        batch?.items ||
+        [];
+      if (!batchItems.length) break;
+      contentItems = contentItems.concat(batchItems);
+      offset += batchItems.length;
+      if (batchItems.length < 500) break;
+    }
+  }
+
+  const tracks = [];
+  for (const item of contentItems) {
+    const track =
+      item?.itemV2?.data ||
+      item?.track ||
+      item?.data ||
+      item;
+    if (!track || !track.name) continue;
+
+    const artistNames =
+      (track.artists?.items || track.artists || [])
+        .map((a) => a?.profile?.name || a?.name || "")
+        .filter(Boolean)
+        .join(", ");
+
+    const durationMs =
+      track.duration?.totalMilliseconds ||
+      track.duration_ms ||
+      0;
+
+    tracks.push({
+      title: track.name,
+      artist: artistNames || "Unknown Artist",
+      durationMs,
+    });
+  }
+
+  console.log(`Spotify: ${tracks.length} tracks via spotifly internal API (playlist ${id})`);
+  return { name, cover, tracks };
+}
+
+/**
  * Fetch Spotify playlist/album/track metadata and track list.
- * Auto-detects: if SPOTIFY_CLIENT_ID + SPOTIFY_CLIENT_SECRET env vars set → use official API (full playlist, paginated).
- * Otherwise → fall back to embed scrape (100-track cap).
+ * Tier 1: our TOTP public token → official Web API
+ * Tier 2: SPOTIFY_CLIENT_ID/SECRET env → credential API
+ * Tier 3: spotifly → internal api-partner GraphQL (no auth)
+ * Tier 4: spotify-url-info → embed scrape (100-track cap)
  *
- * Returns { name, cover, tracks: [{ title, artist, durationMs }] }.
+ * Returns { name, cover, tracks: [{ title, artist, durationMs }], cappedAt? }.
  */
 export async function fetchSpotifyTracks(url) {
   const entity = extractSpotifyEntity(url);
@@ -417,7 +504,18 @@ export async function fetchSpotifyTracks(url) {
     }
   }
 
-  // Fallback: embed scrape (100-track cap for playlists)
+  // Tier 3: spotifly internal GraphQL (no auth, different rate-limit bucket)
+  if (entity && entity.type === "playlist" && Spotifly) {
+    try {
+      const result = await fetchSpotifyViaSpotifly(entity);
+      console.log(`Spotify: ${result.tracks.length} tracks via spotifly internal API`);
+      return result;
+    } catch (spotiflyErr) {
+      console.warn("Spotify spotifly path failed:", spotiflyErr.message);
+    }
+  }
+
+  // Tier 4: embed scrape (100-track cap for playlists)
   console.warn(`Spotify: using embed scrape fallback (max ${MAX_SPOTIFY_TRACKS} tracks)`);
   const { getTracks, getData } = spotify(spotifyFetch);
 
