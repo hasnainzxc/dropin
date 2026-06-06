@@ -553,11 +553,16 @@ function scoreVideoMatch(spotifyTrack, ytVideo) {
 
   let score = 0;
 
-  // 1. Token overlap (+3/token)
+  // 1. Token overlap (+3/token) + title-containment ratio
   const spTokens = spTitle.split(/\s+/).filter((t) => t.length > 2);
+  let titleTokenHits = 0;
   for (const token of spTokens) {
-    if (ytTitle.includes(token)) score += 3;
+    if (ytTitle.includes(token)) { score += 3; titleTokenHits++; }
   }
+  // titleContainment gates the official-content boost (signal 6) so a wrong-but-official
+  // same-album video can't outrank the correct title track (e.g. "Main Tumhara" vs "Dil Bechara").
+  const titleContainment = spTokens.length > 0 ? titleTokenHits / spTokens.length : 1;
+  if (spTokens.length >= 2 && titleContainment < 0.5) score -= 12;
 
   // 2. Artist match (+10 any artist, +12 ALL artists) — split multi-artist
   if (spArtist.length > 2) {
@@ -598,14 +603,18 @@ function scoreVideoMatch(spotifyTrack, ytVideo) {
     if (ytChannel.includes(kw)) { score += 6; break; }
   }
 
-  // 6. Official/primary content boost (tiered)
-  if (ytTitle.includes("official music video") || ytTitle.includes("official video")) score += 8;
-  else if (ytTitle.includes("official audio")) score += 5;
-  else if (ytTitle.includes("official lyric video") || ytTitle.includes("lyrical")) score += 4;
-  else if (ytTitle.includes("visualizer")) score += 3;
-  else if (ytTitle.includes("lyric video")) score += 2;
-  else if (ytTitle.includes("audio")) score += 0;
-  else if (ytTitle.includes("official")) score += 6;
+  // 6. Official/primary content boost (tiered) — only when the title actually
+  // matches the song (containment >= 0.5), so an official video of the WRONG
+  // song from the same album cannot win on the boost alone.
+  const officialBoostAllowed = titleContainment >= 0.5;
+  if (officialBoostAllowed) {
+    if (ytTitle.includes("official music video") || ytTitle.includes("official video")) score += 8;
+    else if (ytTitle.includes("official audio")) score += 5;
+    else if (ytTitle.includes("official lyric video") || ytTitle.includes("lyrical")) score += 4;
+    else if (ytTitle.includes("visualizer")) score += 3;
+    else if (ytTitle.includes("lyric video")) score += 2;
+    else if (ytTitle.includes("official")) score += 6;
+  }
 
   // 7. Expanded junk penalty (-20 each)
   const junk = [
@@ -1089,7 +1098,8 @@ async function handleApi(req, res, url) {
         sendJson(res, {
           ...snapshot(room),
           addedFromSpotify: matched.length,
-          unmatched: unmatched.length
+          unmatched: unmatched.length,
+          cappedAt: spotifyData.cappedAt || 0
         });
         return true;
       }
@@ -1147,7 +1157,8 @@ async function handleApi(req, res, url) {
           jobId,
           matchedCount,
           unmatchedCount,
-          unmatched
+          unmatched,
+          cappedAt: spotifyData.cappedAt || 0
         });
       }
     });
@@ -1156,7 +1167,8 @@ async function handleApi(req, res, url) {
       jobId,
       total,
       name: spotifyData.name,
-      cover: spotifyData.cover
+      cover: spotifyData.cover,
+      cappedAt: spotifyData.cappedAt || 0
     });
     return true;
   }

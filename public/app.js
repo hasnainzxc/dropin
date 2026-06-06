@@ -385,6 +385,7 @@ async function startSpotifyImport(url) {
 
     if (response.status === 401) {
       handleUnauthorized();
+      state.spotifyImporting = false;
       return;
     }
 
@@ -394,6 +395,7 @@ async function startSpotifyImport(url) {
       els.searchMessage.textContent = errMsg;
       renderImportPanel("error", { error: errMsg });
       showToast(errMsg, "bad");
+      state.spotifyImporting = false;
       return;
     }
 
@@ -438,14 +440,29 @@ function renderImportPanel(state, info = {}) {
     const nameHtml = info.name
       ? `<p class="import-playlist-name">${escapeHtml(info.name)}</p>`
       : "";
+    const currentHtml = info.currentTitle
+      ? `<p class="import-current"><span class="import-current__dot"></span>Matching: ${escapeHtml(info.currentTitle)}</p>`
+      : "";
     container.innerHTML = `
-      ${coverHtml}
-      ${nameHtml}
-      <div class="import-progress-bar">
-        <div class="import-progress-fill" style="width:${pct}%"></div>
+      <div class="import-panel__header">
+        ${coverHtml}
+        <div class="import-panel__meta">
+          ${nameHtml}
+          <div class="import-panel__badges">
+            <span class="source-pill--spotify">Spotify</span>
+          </div>
+        </div>
       </div>
-      <p class="import-status">${info.done} / ${info.total} tracks</p>
-      <p class="import-current">${info.currentTitle ? `Matching: ${escapeHtml(info.currentTitle)}` : ""}</p>
+      <div class="import-progress-wrap">
+        <div class="import-progress-bar">
+          <div class="import-progress-fill" style="width:${pct}%"></div>
+        </div>
+        <div class="import-progress-label">
+          <span class="import-progress-count">${info.done} / ${info.total}</span>
+          <span>${pct}%</span>
+        </div>
+      </div>
+      ${currentHtml}
       <div class="import-stats">
         <span class="import-stat import-stat--ok">${info.matchedCount} matched</span>
         ${info.unmatchedCount > 0 ? `<span class="import-stat import-stat--warn">${info.unmatchedCount} not found</span>` : ""}
@@ -472,8 +489,15 @@ function renderImportPanel(state, info = {}) {
         </details>`
       : "";
     container.innerHTML = `
-      ${coverHtml}
-      ${nameHtml}
+      <div class="import-panel__header">
+        ${coverHtml}
+        <div class="import-panel__meta">
+          ${nameHtml}
+          <div class="import-panel__badges">
+            <span class="source-pill--spotify">Spotify</span>
+          </div>
+        </div>
+      </div>
       <div class="import-icon import-icon--ok">
         <svg aria-hidden="true"><use href="#i-check"/></svg>
       </div>
@@ -491,6 +515,14 @@ function renderImportPanel(state, info = {}) {
 
 async function runSearch(query) {
   if (query.length < 2) return;
+
+  // Clear stuck import state on any non-Spotify search so the panel
+  // resets without a page refresh.
+  if (!looksLikeSpotifyUrl(query) && state.spotifyImporting) {
+    state.spotifyImporting = false;
+    state.importJob = null;
+  }
+
   if (looksLikeSpotifyUrl(query)) {
     if (state.spotifyImporting) return;
     return startSpotifyImport(query);
@@ -665,6 +697,12 @@ function connectEvents() {
         showToast(msg + ` (${data.unmatchedCount} not found)`, "warn");
       } else {
         showToast(msg, "ok");
+      }
+      if (data.cappedAt > 0) {
+        showToast(
+          `Only first ${data.cappedAt} tracks available without Spotify API credentials. Set SPOTIFY_CLIENT_ID + SPOTIFY_CLIENT_SECRET for full playlist.`,
+          "warn"
+        );
       }
       state.spotifyImporting = false;
       state.importJob = null;

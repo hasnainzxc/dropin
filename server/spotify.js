@@ -155,7 +155,23 @@ export async function getSpotifyClientToken() {
     return cachedPublicToken;
   }
 
-  const secret = await getTotpSecret();
+  // Collect all secrets to try in order: bundle-extracted first, then fallback chain.
+  const secrets = [];
+  try {
+    const secret = await getTotpSecret();
+    if (secret) secrets.push(secret);
+  } catch {
+    console.warn("Spotify: bundle secret extraction failed, trying fallback chain only.");
+  }
+  for (const fb of FALLBACK_SECRETS) {
+    if (!secrets.some((s) => s.version === fb.version)) {
+      secrets.push(fb);
+    }
+  }
+
+  if (!secrets.length) {
+    throw new Error("No TOTP secrets available (bundle extraction failed + no fallback secrets)");
+  }
 
   // Sync to Spotify server time so the TOTP matches their counter window.
   let serverTimeSec;
@@ -170,36 +186,46 @@ export async function getSpotifyClientToken() {
     serverTimeSec = Math.floor(Date.now() / 1000);
   }
 
-  const totp = generateTOTP(secret.bytes, serverTimeSec);
-  const params = new URLSearchParams({
-    reason: "init",
-    productType: "web_player",
-    totp,
-    totpServer: totp,
-    totpVer: String(secret.version),
-  });
+  let lastErr = null;
 
-  const res = await spotifyFetch(`https://open.spotify.com/api/token?${params}`, {
-    headers: {
-      Accept: "*/*",
-      Origin: "https://open.spotify.com",
-      Referer: "https://open.spotify.com/",
-    },
-  });
+  for (const secret of secrets) {
+    const totp = generateTOTP(secret.bytes, serverTimeSec);
+    const params = new URLSearchParams({
+      reason: "init",
+      productType: "web_player",
+      totp,
+      totpServer: totp,
+      totpVer: String(secret.version),
+    });
 
-  if (!res.ok) {
-    throw new Error(`Spotify public token fetch failed: ${res.status} ${res.statusText}`);
+    try {
+      const res = await spotifyFetch(`https://open.spotify.com/api/token?${params}`, {
+        headers: {
+          Accept: "*/*",
+          Origin: "https://open.spotify.com",
+          Referer: "https://open.spotify.com/",
+        },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.accessToken) {
+          cachedPublicToken = data.accessToken;
+          cachedPublicTokenExpiry =
+            data.accessTokenExpirationTimestampMs || Date.now() + 3600 * 1000;
+          console.log(`Spotify: public token obtained via secret v${secret.version}`);
+          return cachedPublicToken;
+        }
+        lastErr = new Error(`Token response missing accessToken: ${JSON.stringify(data).slice(0, 200)}`);
+      } else {
+        lastErr = new Error(`Token endpoint returned ${res.status} (secret v${secret.version})`);
+      }
+    } catch (fetchErr) {
+      lastErr = fetchErr;
+    }
   }
 
-  const data = await res.json();
-  if (!data.accessToken) {
-    throw new Error(`Spotify public token response missing accessToken: ${JSON.stringify(data).slice(0, 200)}`);
-  }
-
-  cachedPublicToken = data.accessToken;
-  cachedPublicTokenExpiry =
-    data.accessTokenExpirationTimestampMs || Date.now() + 3600 * 1000;
-  return cachedPublicToken;
+  throw new Error(`Spotify public token failed (tried ${secrets.length} secrets): ${lastErr?.message || "unknown"}`);
 }
 
 /**
@@ -207,24 +233,55 @@ export async function getSpotifyClientToken() {
  * Uses standard Spotify Web API with pagination.
  */
 export async function fetchSpotifyTracksViaPathfinder(playlistId, token) {
-  const headers = { Authorization: `Bearer ${token}` };
+  return fetchSpotifyEntityViaPathfinder({ type: "playlist", id: playlistId }, token);
+}
 
-  const metaRes = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, { headers });
-  if (!metaRes.ok) {
-    throw new Error(`Spotify playlist metadata failed: ${metaRes.status} ${metaRes.statusText}`);
+async function spotifyApiFetch(url, headers, retries = 3) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, { headers });
+    if (res.status === 429 && attempt < retries) {
+      const retryAfter = parseInt(res.headers.get("Retry-After") || "0", 10);
+      const delay = retryAfter > 0 ? retryAfter * 1000 : Math.pow(2, attempt) * 1000;
+      await new Promise((r) => setTimeout(r, delay));
+      continue;
+    }
+    return res;
   }
+  return fetch(url, { headers });
+}
+
+/**
+ * Fetch tracks from any Spotify entity (playlist, album, track) via public client token.
+ * Paginates playlists and albums in 100-track pages until exhausted.
+ * Single tracks return a 1-item array.
+ */
+export async function fetchSpotifyEntityViaPathfinder(entity, token) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const { type, id } = entity;
+
+  if (type === "track") {
+    const res = await spotifyApiFetch(`https://api.spotify.com/v1/tracks/${id}`, headers);
+    if (!res.ok) throw new Error(`Spotify track fetch failed: ${res.status}`);
+    const track = await res.json();
+    const trackArtist = (track.artists || []).map((a) => a.name).join(", ");
+    return {
+      name: track.name,
+      cover: track.album?.images?.[0]?.url || "",
+      tracks: [{ title: track.name, artist: trackArtist, durationMs: track.duration_ms }],
+    };
+  }
+
+  // Playlist / album — paginate
+  const metaRes = await spotifyApiFetch(`https://api.spotify.com/v1/${type}s/${id}`, headers);
+  if (!metaRes.ok) throw new Error(`Spotify ${type} metadata failed: ${metaRes.status}`);
   const meta = await metaRes.json();
 
   const allTracks = [];
-  // March 2026: /tracks was renamed to /items; item.track became item.item.
-  // Fall back to the old shape if Spotify serves it during migration.
-  let url = `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=100&offset=0`;
+  let url = `https://api.spotify.com/v1/${type}s/${id}/${type === "playlist" ? "items" : "tracks"}?limit=100&offset=0`;
 
   while (url) {
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      throw new Error(`Spotify tracks fetch failed: ${res.status} ${res.statusText}`);
-    }
+    const res = await spotifyApiFetch(url, headers);
+    if (!res.ok) throw new Error(`Spotify ${type} tracks fetch failed: ${res.status}`);
     const data = await res.json();
 
     for (const item of data.items || []) {
@@ -241,10 +298,17 @@ export async function fetchSpotifyTracksViaPathfinder(playlistId, token) {
   }
 
   return {
-    name: meta.name || "Spotify Playlist",
+    name: meta.name || `Spotify ${type}`,
     cover: meta.images?.[0]?.url || "",
     tracks: allTracks,
   };
+}
+
+/**
+ * Fetch tracks from any Spotify entity via credential-based API.
+ */
+export async function fetchSpotifyEntityWithAPI(entity, token) {
+  return fetchSpotifyEntityViaPathfinder(entity, token);
 }
 
 /**
@@ -292,12 +356,28 @@ export async function fetchSpotifyTracksWithAPI(playlistId, accessToken) {
 }
 
 /**
- * Extract Spotify playlist ID from URL.
- * Handles: open.spotify.com/playlist/{id}, spotify:playlist:{id}, embed URLs
+ * Extract Spotify entity type + ID from any Spotify URL.
+ * Returns { type, id } or null.
  */
-function extractPlaylistId(url) {
-  const match = url.match(/playlist[/:]([a-zA-Z0-9]+)/);
-  return match ? match[1] : null;
+function extractSpotifyEntity(url) {
+  const input = String(url || "").trim();
+  if (!input) return null;
+
+  const uriMatch = input.match(/^spotify:(playlist|album|track|episode|show):([a-zA-Z0-9]{22})\b/);
+  if (uriMatch) return { type: uriMatch[1], id: uriMatch[2] };
+
+  try {
+    const u = new URL(input);
+    if (u.hostname.replace(/^www\./, "") !== "open.spotify.com") return null;
+    const parts = u.pathname.split("/").filter(Boolean);
+    const validTypes = ["playlist", "album", "track", "episode", "show"];
+    const typeIdx = parts.findIndex((p) => validTypes.includes(p));
+    if (typeIdx >= 0 && parts[typeIdx + 1]) {
+      return { type: parts[typeIdx], id: parts[typeIdx + 1].split("?")[0] };
+    }
+  } catch {}
+
+  return null;
 }
 
 /**
@@ -308,13 +388,15 @@ function extractPlaylistId(url) {
  * Returns { name, cover, tracks: [{ title, artist, durationMs }] }.
  */
 export async function fetchSpotifyTracks(url) {
-  const playlistId = extractPlaylistId(url);
+  const entity = extractSpotifyEntity(url);
 
-  // Try public client token first (no credentials needed)
-  if (playlistId) {
+  // Try public client token first (no credentials needed) — handles playlist, album, track.
+  if (entity) {
     try {
       const publicToken = await getSpotifyClientToken();
-      return await fetchSpotifyTracksViaPathfinder(playlistId, publicToken);
+      const result = await fetchSpotifyEntityViaPathfinder(entity, publicToken);
+      console.log(`Spotify: ${result.tracks.length} tracks via public token (${entity.type} ${entity.id})`);
+      return result;
     } catch (publicErr) {
       console.warn("Spotify public token path failed, trying alternatives:", publicErr.message);
     }
@@ -324,16 +406,19 @@ export async function fetchSpotifyTracks(url) {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
 
-  if (playlistId && clientId && clientSecret) {
+  if (entity && clientId && clientSecret) {
     try {
       const token = await getSpotifyAccessToken(clientId, clientSecret);
-      return await fetchSpotifyTracksWithAPI(playlistId, token);
+      const result = await fetchSpotifyEntityWithAPI(entity, token);
+      console.log(`Spotify: ${result.tracks.length} tracks via credential API`);
+      return result;
     } catch (apiErr) {
       console.error("Spotify credential API failed, falling back to embed scrape:", apiErr.message);
     }
   }
 
-  // Fallback: embed scrape (100-track cap)
+  // Fallback: embed scrape (100-track cap for playlists)
+  console.warn(`Spotify: using embed scrape fallback (max ${MAX_SPOTIFY_TRACKS} tracks)`);
   const { getTracks, getData } = spotify(spotifyFetch);
 
   let dataResult, tracksResult;
@@ -367,5 +452,5 @@ export async function fetchSpotifyTracks(url) {
     }))
     .filter((t) => t.title);
 
-  return { name: name || "Spotify Playlist", cover: coverArt, tracks };
+  return { name: name || "Spotify Playlist", cover: coverArt, tracks, cappedAt: tracks.length >= MAX_SPOTIFY_TRACKS ? MAX_SPOTIFY_TRACKS : 0 };
 }

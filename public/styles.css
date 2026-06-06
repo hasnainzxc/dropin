@@ -2303,22 +2303,72 @@ body.is-playing .now-vinyl-disc {
 .import-panel {
   display: flex;
   flex-direction: column;
+  gap: 14px;
+  padding: 20px 16px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background:
+    linear-gradient(160deg, rgba(255, 247, 232, 0.07), rgba(255, 247, 232, 0.02)),
+    rgba(20, 14, 16, 0.72);
+  backdrop-filter: blur(24px) saturate(140%);
+  box-shadow: var(--shadow-md);
+  animation: fadeUp var(--t-slow) var(--ease) both;
+  min-height: 120px;
+}
+
+.import-panel__header {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 28px 20px 32px;
-  text-align: center;
-  min-height: 140px;
+  gap: 12px;
+  width: 100%;
+}
+
+.import-cover {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+
+.import-panel__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.import-playlist-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-panel__badges {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .import-spinner {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: 3px solid var(--line);
   border-top-color: var(--accent-3);
   border-radius: 50%;
   animation: import-spin 0.8s linear infinite;
   flex-shrink: 0;
+  margin: 4px auto 0;
 }
 
 @keyframes import-spin {
@@ -2328,7 +2378,7 @@ body.is-playing .now-vinyl-disc {
 .import-status {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
   line-height: 1.3;
@@ -2342,119 +2392,205 @@ body.is-playing .now-vinyl-disc {
 }
 
 .import-icon {
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   border-radius: var(--r-pill);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  margin: 0 auto;
 }
 
 .import-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
 }
 
 .import-icon--ok {
   background: rgba(124, 231, 189, 0.15);
   color: var(--ok);
+  animation: import-pop var(--t-slow) var(--ease-spring) both;
 }
 
 .import-icon--bad {
   background: rgba(255, 123, 141, 0.15);
   color: var(--bad);
+  animation: fadeUp var(--t-base) var(--ease) both;
+}
+
+@keyframes import-pop {
+  from { transform: scale(0.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 .import-stats {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
 }
 
 .import-stat {
-  font-size: 13px;
+  font-size: 12px;
   font-family: var(--font-mono);
-  padding: 4px 12px;
+  font-weight: 500;
+  padding: 5px 14px;
   border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  transition: transform var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 }
 
 .import-stat--ok {
-  background: rgba(124, 231, 189, 0.12);
+  background: rgba(124, 231, 189, 0.1);
   color: var(--ok);
+  border-color: rgba(124, 231, 189, 0.18);
+}
+
+.import-stat--ok:hover {
+  box-shadow: var(--glow-cool);
+  transform: translateY(-1px);
 }
 
 .import-stat--warn {
-  background: rgba(255, 209, 102, 0.12);
+  background: rgba(255, 209, 102, 0.1);
   color: var(--warn);
+  border-color: rgba(255, 209, 102, 0.18);
 }
 
-.import-cover {
-  width: 64px;
-  height: 64px;
-  border-radius: 8px;
-  object-fit: cover;
-  flex-shrink: 0;
+.import-stat--warn:hover {
+  box-shadow: 0 6px 20px -6px rgba(255, 209, 102, 0.35);
+  transform: translateY(-1px);
 }
 
-.import-playlist-name {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.3;
+.import-progress-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
 }
 
 .import-progress-bar {
   width: 100%;
-  max-width: 280px;
-  height: 6px;
+  height: 8px;
   background: var(--line);
-  border-radius: 3px;
+  border-radius: var(--r-pill);
   overflow: hidden;
+  position: relative;
 }
 
 .import-progress-fill {
   height: 100%;
-  background: var(--accent-3);
-  border-radius: 3px;
-  transition: width 0.3s ease;
+  background: linear-gradient(90deg, #1ed760, rgba(30, 215, 96, 0.7));
+  border-radius: var(--r-pill);
+  transition: width var(--t-base) var(--ease);
+  position: relative;
+  box-shadow: 0 0 12px rgba(30, 215, 96, 0.35);
+}
+
+.import-progress-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.25) 50%, transparent 100%);
+  animation: import-shimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes import-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.import-progress-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.import-progress-count {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
 }
 
 .import-current {
   margin: 0;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--subtle);
   line-height: 1.4;
-  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.import-current__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1ed760;
+  flex-shrink: 0;
+  animation: import-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes import-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
 }
 
 .import-unmatched {
-  margin-top: 8px;
+  margin-top: 4px;
   width: 100%;
-  max-width: 320px;
   font-size: 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
 }
 
 .import-unmatched summary {
   cursor: pointer;
   color: var(--warn);
   font-weight: 600;
-  padding: 4px 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background var(--t-fast) var(--ease);
+}
+
+.import-unmatched summary:hover {
+  background: var(--surface-soft);
+}
+
+.import-unmatched summary::-webkit-details-marker {
+  display: none;
+}
+
+.import-unmatched summary::before {
+  content: "▸";
+  display: inline-block;
+  transition: transform var(--t-base) var(--ease-spring);
+  font-size: 10px;
+}
+
+.import-unmatched[open] summary::before {
+  transform: rotate(90deg);
 }
 
 .import-unmatched ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
+  margin: 0;
+  padding: 0 12px 10px 24px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
-  max-height: 160px;
+  max-height: 140px;
   overflow-y: auto;
 }
 
@@ -2464,18 +2600,51 @@ body.is-playing .now-vinyl-disc {
   white-space: nowrap;
 }
 
-/* Spotify source pill — use on result cards to show "via Spotify" */
 .source-pill--spotify {
   --pill-bg: rgba(30, 215, 96, 0.12);
   --pill-fg: #1ed760;
   background: var(--pill-bg);
   color: var(--pill-fg);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
   border-radius: var(--r-pill);
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .import-spinner,
+  .import-progress-fill::after,
+  .import-current__dot,
+  .import-icon--ok {
+    animation: none !important;
+  }
+  .import-panel {
+    animation: none !important;
+  }
+}
+
+@media (max-width: 340px) {
+  .import-panel {
+    padding: 16px 12px 20px;
+    gap: 12px;
+  }
+  .import-cover {
+    width: 44px;
+    height: 44px;
+  }
+  .import-playlist-name {
+    font-size: 13px;
+  }
+  .import-stat {
+    font-size: 11px;
+    padding: 4px 10px;
+  }
+  .import-icon {
+    width: 40px;
+    height: 40px;
+  }
 }
 
 @media (min-width: 1420px) {
